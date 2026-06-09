@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "narrator": {
+      "command": "node",
+      "args": ["/Users/youwen/Projects/democlaw/agent-video/mcp-server/index.js"]
+    }
+  }
+}

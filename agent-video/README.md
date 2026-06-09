@@ -1,0 +1,217 @@
+# DemoClaw (agent-video)
+
+Give an AI agent the ability to autonomously navigate a web app and produce a
+narrated demo video — research, narration, voiceover, recording, post-production,
+and hosting — all over MCP.
+
+This is a modular, provider-agnostic refactor of the monolithic
+[`muxinc/agent-video`](https://github.com/muxinc/agent-video). The two-pass timing
+engine (the actual innovation) is preserved; everything around it is now
+swappable and individually callable.
+
+## What changed vs. the monolith
+
+- **Discrete, inspectable stages.** The single `create_narrated_recording` tool is
+  split into four tools that exchange JSON artifacts, so an agent can review the
+  narration before burning TTS credits, re-run only the performance pass if the
+  page changed, or swap a provider mid-flight.
+- **Providers configurable at call time.** Narration (Claude / any OpenAI-compatible
+  endpoint incl. DeepSeek), TTS (ElevenLabs / Edge TTS / local MisoTTS), and host
+  (Mux / local file / S3-compatible) are chosen per call, not at compile time.
+- **`extract_page_model` is a first-class primitive.** The accessibility tree +
+  element refs are reusable for any web-agent task, not trapped in the video pipeline.
+- **Timing survives any TTS.** A tiered timing contract keeps ElevenLabs'
+  character-level precision when available and falls back to per-segment synthesis
+  + `ffprobe` duration for engines that emit audio only (Edge, MisoTTS).
+
+## Architecture
+
+```
+index.js                 thin MCP registry + dispatch
+src/
+  config.js              resolve providers (call arg > env > smart default)
+  session.js             session dirs + JSON artifacts
+  browser.js             agent-browser CLI wrapper
+  ffmpeg.js              ffmpeg/ffprobe helpers
+  pageModel.js           accessibility snapshot primitive
+  timing.js              two timing tiers -> uniform segment timings
+  research.js            stage 1: snapshots -> narration.json
+  synthesize.js          stage 2: TTS -> timing.json (+ audio clips)
+  record.js              stage 3: performance pass -> marks.json (+ recording.webm)
+  produce.js             stage 4: ffmpeg assemble + host -> result.json (+ output.mp4)
+  orchestrator.js        runs all four stages in one call
+  narration/  {index, claude, openai}
+  tts/        {index, elevenlabs (char), edge (duration), miso (deferred)}
+  host/       {index, mux, local, s3}
+```
+
+Pipeline: `extract_page_model` -> `generate_narration` -> `synthesize_speech` ->
+`record_performance` -> `produce_video` (or `create_narrated_recording` for all-in-one).
+
+## Setup
+
+### 1. Prerequisites
+
+```bash
+# browser automation (Rust CLI; Chrome via CDP)
+npm i -g agent-browser && agent-browser install
+
+# post-production
+brew install ffmpeg            # provides ffmpeg + ffprobe
+
+# free local TTS path uses uvx (https://docs.astral.sh/uv/)
+```
+
+> Note: the performance pass uses `agent-browser record start/stop`. Confirm your
+> installed `agent-browser` build supports video recording.
+
+### 2. Install dependencies
+
+```bash
+cd mcp-server
+npm install
+```
+
+### 3. Configure (optional)
+
+Copy `.env.example` to **`.env` in this directory** (`agent-video/.env`, parent of
+`mcp-server/`). Fill in only what you need. With **no** credentials, the server
+defaults to free/local providers (Edge TTS + local file output).
+
+For AEGIS demos with DeepSeek narration, set `DEEPSEEK_API_KEY` and:
+
+```
+DEMOCLAW_NARRATION_PROVIDER=openai
+DEMOCLAW_TTS_PROVIDER=edge
+DEMOCLAW_HOST_PROVIDER=local
+```
+
+Credential sniffing also auto-selects DeepSeek when `DEEPSEEK_API_KEY` is present.
+
+### 4. Register the MCP server
+
+Add to your agent's MCP config (e.g. `~/.claude/settings.json` or `.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "narrator": {
+      "command": "node",
+      "args": ["/absolute/path/to/agent-video/mcp-server/index.js"]
+    }
+  }
+}
+```
+
+## Providers
+
+Pass a `providers` object to any stage (or the orchestrator):
+
+```json
+{
+  "providers": {
+    "narration": { "name": "openai", "baseUrl": "https://api.deepseek.com", "model": "deepseek-chat", "apiKeyEnv": "DEEPSEEK_API_KEY" },
+    "tts":       { "name": "edge", "voice": "en-US-AriaNeural" },
+    "host":      { "name": "local" }
+  }
+}
+```
+
+| Layer | Providers | Notes |
+|---|---|---|
+| narration | `claude`, `openai` | `openai` covers DeepSeek/vLLM/Ollama via `baseUrl` + `apiKeyEnv` |
+| tts | `elevenlabs`, `edge`, `miso` | `elevenlabs` = char-timing tier; `edge`/`miso` = duration tier |
+| host | `mux`, `local`, `s3` | `local` = file output (default on-device); `s3` works with R2/MinIO |
+
+**Smart defaults:** TTS defaults to `elevenlabs` if `ELEVENLABS_API_KEY` is set, else
+`edge`. Host defaults to `mux` if Mux tokens are set, else `local`.
+
+### Local MisoTTS (deferred — Mac Studio)
+
+[`MisoLabs/MisoTTS`](https://huggingface.co/MisoLabs/MisoTTS) is an 8B (~32.8 GB)
+local model. It is intentionally **not bundled** — it realistically needs a machine
+like an M2 Ultra (64 GB unified memory). The `miso` provider is wired and ready;
+enable it by pointing `MISO_TTS_CMD` at a local inference command that accepts
+`--file <text> --out <audio> [--voice <ref-clip>]`:
+
+```bash
+MISO_TTS_CMD="uv run python run_misotts.py"   # in the MisoLabsAI/MisoTTS repo
+```
+
+## Tools
+
+- `extract_page_model({ url, sessionId? })` — accessibility tree + refs.
+- `generate_narration({ persona, pages, providers?, sessionId? })` — writes `narration.json`.
+- `synthesize_speech({ sessionId, providers? })` — writes `timing.json` + audio.
+- `record_performance({ sessionId })` — writes `marks.json` + `recording.webm`.
+- `produce_video({ sessionId, providers? })` — writes `output.mp4` + `result.json`, returns the playback URL.
+- `create_narrated_recording({ persona, pages, providers? })` — all four stages in one call.
+- `get_element_bounds({ url, selector })` — bounding box of an element.
+- `run_demo_actions({ url, actions, headed? })` — open a URL, run declarative actions, return the resulting snapshot. A reusable web-agent primitive for scripting/verifying a scene's actions outside the video pipeline.
+
+### Scenes & actions (Phase 1.5)
+
+`pages` are **scenes**: a URL plus an optional UI state reached by running actions before
+narration/recording. This lets a demo click, type, submit, and wait — not just scroll.
+
+`pages` item shape:
+
+```jsonc
+{
+  "url": "http://localhost:5333",
+  "reuseTab": true,                 // continue in the current tab (don't reload) — keeps typed text/results
+  "entryActions": [                 // run in the trimmed inter-scene gap (navigation, fill, submit, waits)
+    { "type": "enableAccessibility" },
+    { "type": "find", "by": "placeholder", "value": "Input text here...", "do": "fill", "text": "..." },
+    { "type": "find", "by": "text", "value": "Submit", "do": "click" },
+    { "type": "wait", "ms": 18000 }
+  ],
+  "segments": [                     // scripted narration; each may fire an action on the timeline
+    { "text": "...", "scrollTo": "top", "action": { "type": "click", "selector": "@e3" } }
+  ],
+  "narration": "...",               // OR a single scripted segment
+  "hint": "Describe the grading results now visible"  // steers auto-generated narration when no segments/narration
+}
+```
+
+A bare `{ url }` (or `{ url, narration }`) still works — it's just a single scroll-only scene.
+
+**Action types:** `click`, `type`, `fill`, `keyboardType`, `press`, `find` (`by` = role/text/label/placeholder/…, `do` = click/fill/…), `scrollIntoView`, `wait` (`ms`), `waitFor` (`selector`, `timeoutMs?`), `enableAccessibility` (Flutter semantics unlock).
+
+**Latency & sync:** `entryActions` (and same-URL `reuseTab` transitions) run in the gap between
+scene marks, which post-production trims — so a multi-second `waitFor`/`wait` for async results
+never desyncs the narration audio. Mixed narration is supported per scene: scripted segments
+(verbatim), auto-generated narration grounded in the post-action snapshot, and a DOM-text
+fallback when the accessibility tree is sparse (e.g. Flutter/canvas apps).
+
+## AEGIS demo (Phase 1.5 — interactive)
+
+With AEGIS running (`./quickstart.sh` in `evalguide_client`):
+
+```bash
+cd mcp-server
+npm run ensure-aegis
+npm run aegis-demo
+```
+
+This is now an **interactive** Playground walkthrough, not a passive scroll: it enables
+Flutter accessibility, types a sample student essay, clicks **Submit**, waits for the real
+AI grading to finish, then narrates the actual results on screen (overall score, AI-detection,
+plagiarism, grammar, summary). No login required (Playground grading works unauthenticated;
+Turnstile must be off locally).
+
+Config (scenes/actions): [`aegis-demo.json`](aegis-demo.json). Phase 2 admin tour:
+[`docs/aegis-demo-phase2.md`](docs/aegis-demo-phase2.md).
+
+## Free, on-device smoke run
+
+Once `agent-browser` + `ffmpeg` are installed, you can run end-to-end against any
+local URL with zero paid APIs (free Edge TTS + local file output). See
+[`scripts/smoke.md`](mcp-server/scripts/smoke.md).
+
+## Artifacts (per session)
+
+Sessions live in `~/Movies/agent-recordings/session-<id>/`:
+`page_model.json`, `narration.json`, `timing.json`, `marks.json`, `result.json`,
+plus `recording.webm`, audio clips, and `output.mp4`. Inspect or hand-edit any
+artifact, then re-run a single stage.

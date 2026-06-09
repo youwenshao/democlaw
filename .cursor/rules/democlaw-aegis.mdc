@@ -1,0 +1,18 @@
+---
+description: Autonomous AEGIS demo video generation via DemoClaw narrator MCP
+alwaysApply: true
+---
+
+# DemoClaw / AEGIS demo recording
+
+When the user asks to demo, record, or produce a video of **AEGIS** (or CritiX / evalguide):
+
+1. **Check readiness** — run `node agent-video/mcp-server/scripts/ensure-aegis.mjs` or probe `http://localhost:5333`. If down, instruct the user to run `./quickstart.sh` in `/Users/youwen/Projects/AEGIS/evalguide_client`. Never run `quickstart.sh` yourself.
+
+2. **Record** — prefer the **narrator** MCP tool `create_narrated_recording` with Phase 1 config from `agent-video/aegis-demo.json` (persona + `http://localhost:5333`). Providers come from `agent-video/.env` (DeepSeek + edge + local).
+
+3. **Retry** — on failure, use discrete MCP tools (`generate_narration`, `synthesize_speech`, `record_performance`, `produce_video`) with the same `sessionId`. Inspect artifacts in `~/Movies/agent-recordings/session-*/`.
+
+4. **Limitations** — Phase 1 is single-URL Playground only (no tab clicks, no admin login). See `agent-video/docs/aegis-demo-phase2.md` for admin tour scope.
+
+Full playbook: `AGENTS.md`.

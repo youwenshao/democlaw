@@ -1,0 +1,73 @@
+{
+  "aegisRoot": "/Users/youwen/Projects/AEGIS/evalguide_client",
+  "healthPorts": [5333, 5173, 8765, 28001],
+  "phase1": {
+    "persona": "an enthusiastic ed-tech product manager demoing AI-powered essay grading for teachers",
+    "pages": [
+      {
+        "url": "http://localhost:5333",
+        "entryActions": [
+          { "type": "enableAccessibility" },
+          { "type": "wait", "ms": 1500 }
+        ],
+        "segments": [
+          {
+            "text": "This is CritiX, an AI grading assistant that helps teachers evaluate student essays in seconds instead of hours.",
+            "scrollTo": "top"
+          },
+          {
+            "text": "Teachers work right here in the Playground: paste an essay on the left, and CritiX returns detailed scores and feedback on the right.",
+            "scrollTo": "top"
+          }
+        ]
+      },
+      {
+        "url": "http://localhost:5333",
+        "reuseTab": true,
+        "segments": [
+          {
+            "text": "Let's grade a real student essay. I'll drop it straight into the input box now.",
+            "scrollTo": "top",
+            "action": {
+              "type": "fillName",
+              "name": "Input text here...",
+              "text": "Social media has fundamentally reshaped how teenagers communicate and form their identities. On one hand, platforms like Instagram and TikTok let students stay connected with friends and discover communities that share their interests. On the other hand, constant comparison with curated online lives can fuel anxiety and lower self-esteem. In my view, the technology itself is neutral; what matters is how young people are taught to use it. Schools should therefore teach digital literacy so that students can enjoy the benefits of social media while protecting their mental health."
+            }
+          },
+          {
+            "text": "With the essay in place, a single click on Submit kicks off the evaluation.",
+            "scrollTo": "top",
+            "action": {
+              "type": "clickName",
+              "name": "Submit",
+              "exact": true
+            }
+          },
+          {
+            "text": "Behind the scenes, CritiX is now running AI-detection, plagiarism, grammar, and rubric scoring all in parallel. This only takes a few moments.",
+            "scrollTo": "top"
+          }
+        ]
+      },
+      {
+        "url": "http://localhost:5333",
+        "reuseTab": true,
+        "entryActions": [
+          { "type": "wait", "ms": 22000 },
+          { "type": "clickName", "name": "Assessment" },
+          { "type": "wait", "ms": 1500 }
+        ],
+        "hint": "The essay has just been graded and the Assessment tab is open, showing a big Overall Score card and an IELTS-style band breakdown. Describe the overall score and the criterion scores (Task Response, Coherence and Cohesion, Lexical Resource, Grammatical Range and Accuracy) exactly as they appear. Mention only numbers that actually appear in the snapshot or visible text - do not invent any."
+      }
+    ]
+  },
+  "phase2": {
+    "note": "Requires admin login; see docs/aegis-demo-phase2.md",
+    "pages": [
+      { "url": "http://localhost:5173/login" },
+      { "url": "http://localhost:5173/dashboard" },
+      { "url": "http://localhost:5173/security" },
+      { "url": "http://localhost:5173/rubrix" }
+    ]
+  }
+}

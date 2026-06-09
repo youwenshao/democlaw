@@ -1,0 +1,15 @@
+{
+  "name": "narrator-mcp-server",
+  "version": "3.0.0",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "smoke": "node scripts/smoke.mjs",
+    "ensure-aegis": "node scripts/ensure-aegis.mjs",
+    "aegis-demo": "node scripts/aegis-demo.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  }
+}
