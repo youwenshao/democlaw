@@ -118,6 +118,9 @@ AEGIS CLI runs (`npm run aegis-demo`, `:phase2`, `:combined`) use OpenScreen pol
 
 Generic MCP/smoke paths default to `ffmpeg`. Override with `DEMOCLAW_POSTPROD_PROVIDER` / `DEMOCLAW_POSTPROD_PRESET` or CLI flags `--post-prod=…` / `--post-prod-preset=…`. OpenScreen adds wallpaper, padding, shadow, auto zoom, and optional synthetic cursor; falls back to ffmpeg on export failure.
 
+Architecture notes (narration LLMs, agent review, cursor/zoom pipeline, planned
+`performance.json`): [`agent-video/docs/production-investigation.md`](agent-video/docs/production-investigation.md).
+
 ```bash
 cd agent-video/mcp-server
 npm run assess-timing -- <sessionId>

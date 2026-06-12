@@ -5,6 +5,35 @@ Autonomous narrated demo video generation for web apps, built on a modular fork 
 
 **Default target:** [AEGIS](https://github.com/) CritiX teacher app (`http://localhost:5333`).
 
+## Why DemoClaw?
+
+We built DemoClaw to produce credible, narrated demo videos for real web platforms
+**without a human in the loop** — driven by a Cursor (or other) agent that explores
+the app, scripts scenes, records browser performance, and iterates on quality until
+the cut is ready to ship.
+
+[`muxinc/agent-video`](https://github.com/muxinc/agent-video) proved the hard part:
+the **two-pass timing engine** that keeps narration and browser actions in sync.
+DemoClaw preserves that core. What it could not do was support our more ambitious
+goal of **agentic, end-to-end demo production for platforms** like CritiX:
+
+| Upstream limitation | What DemoClaw adds |
+|---|---|
+| One monolithic MCP call — black-box output | Four discrete stages with JSON artifacts an agent can inspect and retry |
+| Scroll-only tours from a bare URL list | Interactive scenes: click, type, submit, wait for async results |
+| Providers baked in (ElevenLabs, Mux) | Swappable narration, TTS, host, and post-prod per call or via env |
+| No quality loop | Auto-critique (ralph-loop) with partial re-record and OpenScreen polish |
+| Page model trapped in the pipeline | First-class primitives (`extract_page_model`, `run_demo_actions`) |
+
+The AEGIS demo shows the difference: instead of a passive homepage scroll through an
+empty Flutter accessibility tree, DemoClaw types a real student essay, clicks Submit,
+waits for AI grading, and narrates the **actual** scores on screen.
+
+Full unsupervised exploration remains the direction — today, AEGIS runs combine curated
+scene manifests with agent orchestration via MCP. Planned work (pre-TTS review gates,
+`performance.json` for cursor/zoom intent) is documented in
+[`agent-video/docs/production-investigation.md`](agent-video/docs/production-investigation.md).
+
 ## Quick start
 
 ### 1. Prerequisites
@@ -54,6 +83,6 @@ Ask: *"Record an AEGIS demo video"* — the agent should check readiness, then c
 |------|---------|
 | [`agent-video/mcp-server/`](agent-video/mcp-server/) | Narrator MCP server + pipeline |
 | [`agent-video/aegis-demo.json`](agent-video/aegis-demo.json) | Demo URLs, persona, health ports |
-| [`agent-video/docs/aegis-demo-phase2.md`](agent-video/docs/aegis-demo-phase2.md) | Admin tour (future) |
+| [`agent-video/docs/aegis-demo-phase2.md`](agent-video/docs/aegis-demo-phase2.md) | CritiX Admin multi-page tour |
 
 See [`agent-video/README.md`](agent-video/README.md) for architecture, providers, and tool reference.

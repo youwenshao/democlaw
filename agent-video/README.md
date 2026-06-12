@@ -4,12 +4,46 @@ Give an AI agent the ability to autonomously navigate a web app and produce a
 narrated demo video — research, narration, voiceover, recording, post-production,
 and hosting — all over MCP.
 
-This is a modular, provider-agnostic refactor of the monolithic
+Our ambition is **agent-driven demo production for real platforms**: an agent explores
+a web app, decides what to show, writes grounded narration, records interactive
+performance, and ships a polished video — not a scroll-only homepage tour. The modular
+pipeline below exists to serve that goal, not merely for code hygiene.
+
+This is a provider-agnostic fork of the monolithic
 [`muxinc/agent-video`](https://github.com/muxinc/agent-video). The two-pass timing
 engine (the actual innovation) is preserved; everything around it is now
 swappable and individually callable.
 
-## What changed vs. the monolith
+## Why we forked muxinc/agent-video
+
+### What the monolith could do
+
+One MCP call turns a URL list into a narrated screencast. That works for static or
+marketing pages with a rich DOM and predictable layout. Output targets Mux hosting with
+ElevenLabs narration — a good proof of concept, not a production pipeline for complex apps.
+
+### What we needed for platform demos
+
+Real products (Flutter/canvas UIs, multi-page admin consoles, async workflows) need more
+than scroll-and-narrate:
+
+- **Interactive scenes, not scroll-only** — click, fill, submit, wait for results
+  ([`src/actions.js`](mcp-server/src/actions.js), [`src/sceneReplay.js`](mcp-server/src/sceneReplay.js))
+- **Mixed scripted + snapshot-grounded narration** — verbatim segments where the story
+  is fixed; auto LLM narration grounded in post-action snapshots where content is dynamic
+  ([`src/research.js`](mcp-server/src/research.js))
+- **Partial stage retry** — re-run TTS, recording, or assembly without starting over
+  ([`index.js`](mcp-server/index.js) tool surface)
+- **Auto-critique loop** — assess pacing and workflow, iterate on ffmpeg, polish once
+  ([`src/critique/runLoop.js`](mcp-server/src/critique/runLoop.js))
+- **Post-production polish** — synthetic cursor, zoom, wallpaper for platform-ready output
+  ([`src/polish/`](mcp-server/src/polish/))
+
+A bare `{ url }` page still works — it is just a single scroll-only scene, which is
+insufficient for apps like AEGIS CritiX where the accessibility tree is sparse until
+you enable semantics and drive real UI interactions.
+
+### What DemoClaw changed
 
 - **Discrete, inspectable stages.** The single `create_narrated_recording` tool is
   split into four tools that exchange JSON artifacts, so an agent can review the
@@ -23,6 +57,9 @@ swappable and individually callable.
 - **Timing survives any TTS.** A tiered timing contract keeps ElevenLabs'
   character-level precision when available and falls back to per-segment synthesis
   + `ffprobe` duration for engines that emit audio only (Edge, MisoTTS).
+
+Agent review gates and planned `performance.json` (cursor/zoom intent) are documented in
+[`docs/production-investigation.md`](docs/production-investigation.md).
 
 ## Architecture
 
@@ -229,3 +266,11 @@ Sessions live in `~/Movies/agent-recordings/session-<id>/`:
 `page_model.json`, `narration.json`, `timing.json`, `marks.json`, `result.json`,
 plus `recording.webm`, audio clips, and `output.mp4`. Inspect or hand-edit any
 artifact, then re-run a single stage.
+
+## Further reading
+
+- [`docs/production-investigation.md`](docs/production-investigation.md) — narration
+  LLMs vs Cursor agent review, auto-critique gaps, OpenScreen cursor/zoom pipeline,
+  and planned `performance.json` work.
+- [`docs/aegis-demo-phase2.md`](docs/aegis-demo-phase2.md) — CritiX Admin tour.
+- [`docs/aegis-a11y-hooks.md`](docs/aegis-a11y-hooks.md) — Flutter accessibility.
