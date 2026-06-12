@@ -7,12 +7,20 @@ alwaysApply: true
 
 When the user asks to demo, record, or produce a video of **AEGIS** (or CritiX / evalguide):
 
-1. **Check readiness** — run `node agent-video/mcp-server/scripts/ensure-aegis.mjs` or probe `http://localhost:5333`. If down, instruct the user to run `./quickstart.sh` in `/Users/youwen/Projects/AEGIS/evalguide_client`. Never run `quickstart.sh` yourself.
+1. **Check readiness** — run `node agent-video/mcp-server/scripts/ensure-aegis.mjs` (set `AEGIS_DEMO_PHASE=2` or `combined` for admin). If down, instruct the user to run `./quickstart.sh` in `/Users/youwen/Projects/AEGIS/evalguide_client`. Never run `quickstart.sh` yourself.
 
-2. **Record** — prefer the **narrator** MCP tool `create_narrated_recording` with Phase 1 config from `agent-video/aegis-demo.json` (persona + `http://localhost:5333`). Providers come from `agent-video/.env` (DeepSeek + edge + local).
+2. **Record** — prefer npm scripts from `agent-video/mcp-server`:
+   - Phase 1.5 Playground: `npm run aegis-demo`
+   - CritiX Admin tour: `npm run aegis-demo:phase2`
+   - Full product story: `npm run aegis-demo:combined`
+   Equivalent MCP call: `create_narrated_recording` with persona + pages from [`agent-video/aegis-demo.json`](agent-video/aegis-demo.json). Phase 2 injects login credentials from AEGIS `.aegis/state.env` at runtime.
 
 3. **Retry** — on failure, use discrete MCP tools (`generate_narration`, `synthesize_speech`, `record_performance`, `produce_video`) with the same `sessionId`. Inspect artifacts in `~/Movies/agent-recordings/session-*/`.
 
-4. **Limitations** — Phase 1 is single-URL Playground only (no tab clicks, no admin login). See `agent-video/docs/aegis-demo-phase2.md` for admin tour scope.
+4. **Verify admin flow** — `npm run verify-phase2` before first Phase 2 recording.
 
-Full playbook: `AGENTS.md`.
+5. **Auto-critique (default on)** — `create_narrated_recording` and `npm run aegis-demo*` run the critique loop automatically (goals.json + assess_timing + critique.json, up to 3 ffmpeg iterations, then OpenScreen polish). Use `--no-critique` or `critique: { enabled: false }` to skip. Partial fixes: `npm run continue-critique -- <sessionId> --clips=6,7,8,9`. See `.cursor/rules/democlaw-critique.mdc`.
+
+Default AEGIS CLI runs use OpenScreen + synthetic cursor from the manifest. Use `npm run aegis-demo:fast` or `--fast` for ffmpeg-only output.
+
+Full playbook: `AGENTS.md`. Phase 2 details: `agent-video/docs/aegis-demo-phase2.md`.

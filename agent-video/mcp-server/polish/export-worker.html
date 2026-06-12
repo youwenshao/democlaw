@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>DemoClaw polish export</title>
+  <style>body { margin: 0; background: #000; }</style>
+</head>
+<body>
+  <video id="source" playsinline muted crossorigin="anonymous"></video>
+  <canvas id="canvas"></canvas>
+  <script type="module">
+    import {
+      findActiveZoom,
+      computeZoomTransform,
+      computeVideoRect,
+      getZoomScale,
+    } from "./vendor/zoom.js";
+    import {
+      interpolateCursorAt,
+      mapCursorToStage,
+      isNearClick,
+      drawCursor,
+    } from "./vendor/cursor.js";
+
+    const params = new URLSearchParams(location.search);
+    const planUrl = params.get("plan") || "polish_plan.json";
+    const videoUrl = params.get("video") || "concat_silent.mp4";
+    let wallpaperImage = null;
+
+    async function loadPlan() {
+      const res = await fetch(planUrl);
+      if (!res.ok) throw new Error(`Failed to load plan: ${res.status}`);
+      return res.json();
+    }
+
+    function roundRect(ctx, x, y, w, h, r) {
+      const radius = Math.min(r, w / 2, h / 2);
+      ctx.beginPath();
+      ctx.moveTo(x + radius, y);
+      ctx.arcTo(x + w, y, x + w, y + h, radius);
+      ctx.arcTo(x + w, y + h, x, y + h, radius);
+      ctx.arcTo(x, y + h, x, y, radius);
+      ctx.arcTo(x, y, x + w, y, radius);
+      ctx.closePath();
+    }
+
+    function drawCover(ctx, img, w, h) {
+      const scale = Math.max(w / img.width, h / img.height);
+      const sw = w / scale;
+      const sh = h / scale;
+      const sx = (img.width - sw) / 2;
+      const sy = (img.height - sh) / 2;
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h);
+    }
+
+    async function loadWallpaperImage(url) {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Wallpaper fetch failed: ${res.status}`);
+      const blob = await res.blob();
+      if (typeof createImageBitmap === "function") {
+        return createImageBitmap(blob);
+      }
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error("Wallpaper image decode failed"));
+        img.src = URL.createObjectURL(blob);
+      });
+    }
+
+    function drawShadow(ctx, rect, radius, intensity) {
+      ctx.save();
+      ctx.shadowColor = `rgba(0,0,0,${0.35 * intensity})`;
+      ctx.shadowBlur = 48 * intensity;
+      ctx.shadowOffsetY = 16 * intensity;
+      roundRect(ctx, rect.x, rect.y, rect.width, rect.height, radius);
+      ctx.fillStyle = "#111";
+      ctx.fill();
+      ctx.restore();
+    }
+
+    function renderFrame(ctx, video, plan, timeMs, sourceW, sourceH) {
+      const out = plan.output;
+      const W = out.width;
+      const H = out.height;
+      ctx.canvas.width = W;
+      ctx.canvas.height = H;
+
+      if (wallpaperImage) {
+        drawCover(ctx, wallpaperImage, W, H);
+      } else {
+        ctx.fillStyle = out.wallpaper || "#0f172a";
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      const padding = out.padding ?? 48;
+      const borderRadius = out.borderRadius ?? 12;
+      const videoRect = computeVideoRect(W, H, sourceW, sourceH, padding);
+
+      const active = findActiveZoom(plan.zoomRegions || [], timeMs, {
+        easeInMs: plan.postProd?.zoom?.easeInMs ?? 400,
+        easeOutMs: plan.postProd?.zoom?.easeOutMs ?? 600,
+      });
+
+      const zoomScale = active.region ? getZoomScale(active.region.depth) : 1;
+      const transform = computeZoomTransform({
+        stageWidth: W,
+        stageHeight: H,
+        videoRect,
+        focus: active.focus,
+        zoomScale,
+        progress: active.progress,
+      });
+
+      if (out.showShadow) {
+        drawShadow(ctx, videoRect, borderRadius, 1);
+      }
+
+      ctx.save();
+      roundRect(ctx, videoRect.x, videoRect.y, videoRect.width, videoRect.height, borderRadius);
+      ctx.clip();
+
+      const cx = videoRect.x + videoRect.width / 2;
+      const cy = videoRect.y + videoRect.height / 2;
+      ctx.translate(cx + transform.tx, cy + transform.ty);
+      ctx.scale(transform.scale, transform.scale);
+      ctx.drawImage(
+        video,
+        -videoRect.width / 2,
+        -videoRect.height / 2,
+        videoRect.width,
+        videoRect.height
+      );
+      ctx.restore();
+
+      if (
+        plan.postProd?.cursor?.enabled &&
+        plan.cursorTelemetry?.length
+      ) {
+        const focus = interpolateCursorAt(plan.cursorTelemetry, timeMs);
+        const pos = mapCursorToStage(focus, videoRect, transform);
+        const clickPulse = isNearClick(timeMs, plan.cursorClickTimestamps || []);
+        drawCursor(ctx, pos.x, pos.y, {
+          scale: plan.postProd.cursor.scale ?? 1.2,
+          clickPulse,
+        });
+      }
+    }
+
+    function waitForMetadata(video) {
+      return new Promise((resolve, reject) => {
+        if (video.readyState >= 1) return resolve();
+        video.addEventListener("loadedmetadata", resolve, { once: true });
+        video.addEventListener("error", () => reject(new Error("Video failed to load")), {
+          once: true,
+        });
+      });
+    }
+
+    async function exportVideo(plan) {
+      const video = document.getElementById("source");
+      const canvas = document.getElementById("canvas");
+      const ctx = canvas.getContext("2d");
+
+      wallpaperImage = null;
+      if (plan.output?.wallpaperUrl) {
+        try {
+          wallpaperImage = await loadWallpaperImage(plan.output.wallpaperUrl);
+        } catch (err) {
+          console.warn(`[export-worker] wallpaper load failed: ${err.message}`);
+        }
+      }
+
+      const workingName = videoUrl.includes("/") ? videoUrl : plan.workingVideo.split("/").pop();
+      video.src = workingName;
+      video.muted = true;
+
+      await waitForMetadata(video);
+
+      const fps = plan.output.frameRate || 30;
+      const planMs = plan.timeline.totalDurationMs;
+      const videoDurationMs =
+        Number.isFinite(video.duration) && video.duration > 0
+          ? video.duration * 1000
+          : planMs;
+      const totalMs = Math.min(planMs, videoDurationMs);
+      const totalFrames = Math.ceil((totalMs / 1000) * fps);
+      const playbackRate = plan.export?.playbackRate ?? 1;
+
+      canvas.width = plan.output.width;
+      canvas.height = plan.output.height;
+      const stream = canvas.captureStream(fps);
+      const recorder = new MediaRecorder(stream, {
+        mimeType: MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
+          ? "video/webm;codecs=vp9"
+          : "video/webm",
+        videoBitsPerSecond: plan.output.bitrate || 8_000_000,
+      });
+
+      const chunks = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size) chunks.push(e.data);
+      };
+
+      const done = new Promise((resolve) => {
+        recorder.onstop = () => resolve(new Blob(chunks, { type: "video/webm" }));
+      });
+
+      let stopped = false;
+      let rafId = null;
+      let rvfcId = null;
+      let lastProgressMs = -1;
+      let stallTicks = 0;
+
+      const finish = async () => {
+        if (stopped) return;
+        stopped = true;
+        if (rafId != null) cancelAnimationFrame(rafId);
+        if (rvfcId != null && video.cancelVideoFrameCallback) {
+          video.cancelVideoFrameCallback(rvfcId);
+        }
+        video.pause();
+        recorder.stop();
+        const blob = await done;
+
+        const uploadRes = await fetch("/export-upload", {
+          method: "POST",
+          body: blob,
+          headers: { "Content-Type": blob.type || "video/webm" },
+        });
+        if (!uploadRes.ok) {
+          throw new Error(`Export upload failed: ${uploadRes.status}`);
+        }
+
+        window.__EXPORT_RESULT__ = {
+          success: true,
+          frames: totalFrames,
+          mimeType: blob.type,
+        };
+      };
+
+      const tick = () => {
+        if (stopped) return;
+
+        const timeMs = Math.min(video.currentTime * 1000, totalMs);
+        renderFrame(ctx, video, plan, timeMs, video.videoWidth, video.videoHeight);
+
+        window.__EXPORT_PROGRESS__ = {
+          timeMs: Math.round(timeMs),
+          totalMs,
+          frame: Math.round((timeMs / 1000) * fps),
+          totalFrames,
+          percentage: Math.min(100, Math.round((timeMs / totalMs) * 100)),
+        };
+
+        if (Math.abs(timeMs - lastProgressMs) < 8) {
+          stallTicks += 1;
+        } else {
+          stallTicks = 0;
+          lastProgressMs = timeMs;
+        }
+
+        const nearEnd = timeMs >= totalMs - 100;
+        const stalled = stallTicks > 90;
+        if (nearEnd || video.ended || stalled) {
+          finish().catch((err) => {
+            window.__EXPORT_RESULT__ = { success: false, error: err.message || String(err) };
+          });
+          return;
+        }
+      };
+
+      const scheduleTick = () => {
+        if (stopped) return;
+        if (video.requestVideoFrameCallback) {
+          rvfcId = video.requestVideoFrameCallback(() => {
+            tick();
+            scheduleTick();
+          });
+        } else {
+          rafId = requestAnimationFrame(() => {
+            tick();
+            scheduleTick();
+          });
+        }
+      };
+
+      video.currentTime = 0;
+      video.playbackRate = playbackRate;
+      video.addEventListener(
+        "ended",
+        () => {
+          finish().catch((err) => {
+            window.__EXPORT_RESULT__ = { success: false, error: err.message || String(err) };
+          });
+        },
+        { once: true }
+      );
+      recorder.start(100);
+
+      await video.play();
+      scheduleTick();
+
+      await new Promise((resolve, reject) => {
+        const check = setInterval(() => {
+          if (window.__EXPORT_RESULT__ != null) {
+            clearInterval(check);
+            if (window.__EXPORT_RESULT__.success) resolve();
+            else reject(new Error(window.__EXPORT_RESULT__.error || "Export failed"));
+          }
+        }, 100);
+      });
+    }
+
+    try {
+      const plan = await loadPlan();
+      await exportVideo(plan);
+    } catch (err) {
+      window.__EXPORT_RESULT__ = { success: false, error: err.message || String(err) };
+    }
+  </script>
+</body>
+</html>

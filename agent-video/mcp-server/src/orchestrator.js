@@ -7,8 +7,26 @@ import { generateNarration } from "./research.js";
 import { synthesizeSpeech } from "./synthesize.js";
 import { recordPerformance } from "./record.js";
 import { produceVideo } from "./produce.js";
+import { createNarratedRecordingWithCritique } from "./critique/runLoop.js";
 
-export async function createNarratedRecording({ persona, pages, providers }) {
+const DEFAULT_CRITIQUE = { enabled: true, maxIterations: 3 };
+
+export async function createNarratedRecording({
+  persona,
+  pages,
+  providers,
+  critique = DEFAULT_CRITIQUE,
+}) {
+  const critiqueConfig = { ...DEFAULT_CRITIQUE, ...(critique || {}) };
+  if (critiqueConfig.enabled !== false) {
+    return createNarratedRecordingWithCritique({
+      persona,
+      pages,
+      providers,
+      critique: critiqueConfig,
+    });
+  }
+
   const session = ensureSession();
   const log = makeLogger(session.sessionId);
   log(`Starting session ${session.sessionId} -> ${session.sessionDir}`);

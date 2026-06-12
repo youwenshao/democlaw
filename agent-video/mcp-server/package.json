@@ -7,9 +7,19 @@
     "start": "node index.js",
     "smoke": "node scripts/smoke.mjs",
     "ensure-aegis": "node scripts/ensure-aegis.mjs",
-    "aegis-demo": "node scripts/aegis-demo.mjs"
+    "aegis-demo": "node scripts/aegis-demo.mjs",
+    "aegis-demo:fast": "node scripts/aegis-demo.mjs --fast",
+    "aegis-demo:phase2": "AEGIS_DEMO_PHASE=2 node scripts/aegis-demo.mjs",
+    "aegis-demo:combined": "AEGIS_DEMO_PHASE=combined node scripts/aegis-demo.mjs",
+    "verify-phase2": "node scripts/verify-phase2-actions.mjs",
+    "setup-critix-admin-auth": "node scripts/setup-critix-admin-auth.mjs",
+    "assess-timing": "node scripts/assess-timing.mjs",
+    "continue-critique": "node scripts/continue-critique.mjs",
+    "test-polish-critique": "node scripts/test-polish-critique.mjs",
+    "test-polish-export": "node scripts/test-polish-export.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "playwright": "^1.52.0"
   }
 }

@@ -1,0 +1,101 @@
+---
+description: Ralph-loop auto-critique for DemoClaw demo recordings — goals, self-assessment, iterative improvement
+alwaysApply: false
+---
+
+# DemoClaw auto-critique (ralph-loop)
+
+When producing a narrated demo (especially AEGIS), run this loop after the research pass and before final polish.
+
+## Loop (max 3 iterations)
+
+1. `generate_narration` → write **`goals.json`** to the session dir (`~/Movies/agent-recordings/session-<id>/`).
+2. `synthesize_speech` → `record_performance`.
+3. `assess_timing` (MCP) → agent writes **`critique.json`** by comparing artifacts to goals.
+4. If defects remain and iteration < 3:
+   - **Scene-local text (`action: "edit"`):** edit `narration.json` for flagged scenes → `synthesize_speech({ clipNums })` → `record_performance({ clipNums, merge: true })` → `produce_video` with `postProd: { name: "ffmpeg" }`.
+   - **Scene-local visual/workflow (`action: "rerecord"`):** same partial path; re-record even if narration unchanged.
+   - **Structural:** revise hints/manifest → `generate_narration` → rewrite `goals.json` → continue.
+5. When **pass** or iteration cap hit → **`produce_video`** with `postProd: { name: "openscreen", preset: "demo-with-cursor" }` for final polish.
+
+**Iterate on ffmpeg only.** OpenScreen polish runs once on the accepted cut.
+
+## goals.json contract
+
+```json
+{
+  "persona": "...",
+  "scenes": [
+    {
+      "clipNum": 1,
+      "intent": "Hook: what CritiX is",
+      "mustShow": ["Playground", "essay input"],
+      "mustSay": ["AI grading", "teachers"],
+      "avoid": ["invented scores", "admin details"],
+      "targetWpmRange": [110, 170]
+    }
+  ],
+  "story": {
+    "open": "Problem → product",
+    "close": "Outcome / next step",
+    "throughline": "Teacher workflow end-to-end"
+  }
+}
+```
+
+## critique.json contract
+
+```json
+{
+  "iteration": 1,
+  "verdict": "revise",
+  "scenes": [
+    {
+      "clipNum": 2,
+      "defects": [
+        {
+          "type": "rushing",
+          "severity": "medium",
+          "evidence": "segment 3 WPM 198",
+          "fix": "Shorten text or split into two segments"
+        }
+      ],
+      "action": "edit"
+    }
+  ],
+  "structural": [],
+  "next": "scene-fix"
+}
+```
+
+`verdict`: `"pass"` | `"revise"`. `next`: `"polish"` | `"scene-fix"` | `"full-redo"`.  
+`action` per scene: `"keep"` | `"edit"` | `"rerecord"`.
+
+## Defect taxonomy (self-assessment rubric)
+
+| Type | Check |
+|------|--------|
+| `unimportant_detail` | Narration mentions UI chrome, nav labels, or metadata not central to the story |
+| `redundant` | Repeats prior scene without new information |
+| `workflow_logic` | Action order wrong (click before fill, narrate results before wait completes) |
+| `invented_fact` | Numbers/labels not in `grounding.snapshotText` or segment snapshot |
+| `rushing` | WPM > 175 or segment < 1500ms with long text |
+| `dragging` | WPM < 95 or segment > 14000ms monologue |
+| `desync` | Action segment ends long before downstream `waitFor`/result scene |
+| `persona_drift` | Tone doesn't match persona |
+| `weak_open_close` | Missing hook or call-to-action |
+| `login_failed` | Admin login `waitFor` / fill / submit failed |
+| `nav_failed` | Sidebar nav or tab click failed during admin tour |
+| `wrong_page` | Recording continued on login page or URL fallback without auth |
+| `focus_missing` | No valid action focusEvents for scenes with clicks |
+
+Use **`narration.json`** (segments + `grounding`), **`timing.json`**, **`assess_timing` output**, and **`goals.json`**. No video frames required.
+
+## Decision tree
+
+- **scene-fix (`edit`):** 1–2 scenes, text/pacing only → edit `narration.json` → partial `synthesize_speech({ clipNums })` → partial `record_performance({ clipNums, merge: true })` if needed → ffmpeg `produce_video`.
+- **scene-fix (`rerecord`):** workflow/visual defect → partial record even without narration edits.
+- **full-redo:** wrong scene order, missing scenes, bad hints → regenerate narration with revised manifest/hints.
+- **polish:** no material defects → openscreen `produce_video` (preset `demo-with-cursor` for synthetic cursor).
+
+Full playbook: `AGENTS.md` § Auto-critique loop.

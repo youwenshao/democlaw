@@ -31,7 +31,9 @@ that manifest's `phase1.persona` + `phase1.pages`.
 Do **not** pass a bare `{ "pages": [{ "url": "http://localhost:5333" }] }` for AEGIS — that
 reverts to the old passive scroll-only tour of a near-empty Flutter accessibility tree.
 
-Providers resolve from env (DeepSeek narration, Edge TTS, local file output).
+Providers resolve from env (DeepSeek narration, Edge TTS, local file output) and
+manifest `providers.postProd` (OpenScreen + synthetic cursor). Use `npm run aegis-demo:fast`
+for ffmpeg-only output during iteration.
 Output: `file://.../output.mp4` under `~/Movies/agent-recordings/session-*/`.
 
 Scene/action manifest shape (entryActions, reuseTab, per-segment actions, hint) is documented
@@ -57,10 +59,88 @@ npm run aegis-demo
 
 Re-run only the failed stage using the same `sessionId`.
 
+## Auto-critique loop (ralph-loop)
+
+**Enabled by default** for `create_narrated_recording`, `npm run aegis-demo`, `:phase2`, and
+`:combined`. Disable with `--no-critique` (CLI) or `critique: { enabled: false }` (MCP). The
+orchestrator auto-writes `goals.json` and `critique.json`; pacing fixes iterate on ffmpeg, then
+OpenScreen polish runs once on the accepted cut.
+
+Manual / partial continuation (see
+[`.cursor/rules/democlaw-critique.mdc`](.cursor/rules/democlaw-critique.mdc)):
+
+```text
+generate_narration → write goals.json
+synthesize_speech → record_performance
+assess_timing → agent writes critique.json
+→ scene-fix or full-redo (max 3 iterations, postProd=ffmpeg)
+→ produce_video with postProd=openscreen (final polish only; preset demo-with-cursor for cursor)
+```
+
+Partial re-record (after a full run):
+
+```text
+npm run continue-critique -- <sessionId> --clips=6,7,8,9   # re-record + assess + ffmpeg
+npm run continue-critique -- <sessionId> --polish          # final OpenScreen polish
+```
+
+Or discrete MCP tools:
+
+```text
+synthesize_speech({ sessionId, clipNums: [2] })     // if narration changed
+record_performance({ sessionId, clipNums: [2], merge: true })
+produce_video({ sessionId, providers: { postProd: { name: "ffmpeg" } } })
+```
+
+| Artifact | Writer | Purpose |
+|----------|--------|---------|
+| `goals.json` | Cursor agent | Per-scene intent, mustShow/mustSay/avoid, target WPM |
+| `critique.json` | Cursor agent | Defects vs goals, next action |
+| `narration.json` → `grounding` | Stage 1 | Snapshot text for fact-checking |
+| `assess_timing` output | MCP tool | Deterministic WPM / pacing flags |
+
+**Iterate on ffmpeg** (`postProd: { name: "ffmpeg" }`) during revisions; run **OpenScreen polish once** on the accepted cut.
+
+### postProd provider (Stage 4)
+
+AEGIS CLI runs (`npm run aegis-demo`, `:phase2`, `:combined`) use OpenScreen polish with synthetic cursor via [`aegis-demo.json`](agent-video/aegis-demo.json). Use `npm run aegis-demo:fast` or `--fast` for ffmpeg-only output during iteration.
+
+```json
+{
+  "providers": {
+    "postProd": {
+      "name": "openscreen",
+      "preset": "demo-with-cursor"
+    }
+  }
+}
+```
+
+Generic MCP/smoke paths default to `ffmpeg`. Override with `DEMOCLAW_POSTPROD_PROVIDER` / `DEMOCLAW_POSTPROD_PRESET` or CLI flags `--post-prod=…` / `--post-prod-preset=…`. OpenScreen adds wallpaper, padding, shadow, auto zoom, and optional synthetic cursor; falls back to ffmpeg on export failure.
+
+```bash
+cd agent-video/mcp-server
+npm run assess-timing -- <sessionId>
+```
+
 ## Phase 1 vs Phase 2
 
-- **Phase 1.5 (now):** Teacher Playground at `http://localhost:5333` — no login. Interactive: types a sample essay, clicks Submit, waits for grading, narrates the real results. Requires Turnstile off locally.
-- **Phase 2 (later):** CritiX Admin multi-page tour — see [`agent-video/docs/aegis-demo-phase2.md`](agent-video/docs/aegis-demo-phase2.md). Requires admin credentials (login form fill via the same action primitives).
+- **Phase 1.5:** Teacher Playground at `http://localhost:5333` — no login. Interactive: types a sample essay, clicks Submit, waits for grading, narrates the real results. Requires Turnstile off locally.
+- **Phase 2:** CritiX Admin multi-page tour at `http://localhost:5173/admin/` — login + dashboard, users, submissions, security, rubrix. Credentials loaded from AEGIS `.aegis/state.env` at runtime.
+
+### Phase 2 / combined CLI
+
+```bash
+cd agent-video/mcp-server
+AEGIS_DEMO_PHASE=2 npm run ensure-aegis
+npm run verify-phase2              # optional smoke test
+npm run aegis-demo:phase2          # admin tour only
+npm run aegis-demo:combined        # Playground + admin in one video
+npm run aegis-demo:fast            # ffmpeg-only (skip OpenScreen polish)
+```
+
+Set `AEGIS_DEMO_PHASE=1|2|combined` or pass `--phase=…` to `aegis-demo.mjs`. See
+[`agent-video/docs/aegis-demo-phase2.md`](agent-video/docs/aegis-demo-phase2.md).
 
 ## Manifest
 

@@ -122,9 +122,17 @@ Pass a `providers` object to any stage (or the orchestrator):
 | narration | `claude`, `openai` | `openai` covers DeepSeek/vLLM/Ollama via `baseUrl` + `apiKeyEnv` |
 | tts | `elevenlabs`, `edge`, `miso` | `elevenlabs` = char-timing tier; `edge`/`miso` = duration tier |
 | host | `mux`, `local`, `s3` | `local` = file output (default on-device); `s3` works with R2/MinIO |
+| postProd | `ffmpeg`, `openscreen` | `ffmpeg` = default concat/mux; `openscreen` = wallpaper/padding/shadow/zoom polish |
+
+Partial re-record (after a full run): `record_performance({ sessionId, clipNums: [2], merge: true })`.  
+Partial TTS: `synthesize_speech({ sessionId, clipNums: [2] })`. Preset `demo-with-cursor` enables synthetic cursor overlay and uses the macOS desktop wallpaper as background (override with `DEMOCLAW_WALLPAPER=#0f172a` or an image path).
 
 **Smart defaults:** TTS defaults to `elevenlabs` if `ELEVENLABS_API_KEY` is set, else
-`edge`. Host defaults to `mux` if Mux tokens are set, else `local`.
+`edge`. Host defaults to `mux` if Mux tokens are set, else `local`. Post-production
+defaults to `ffmpeg` for generic MCP calls; AEGIS demo manifest sets `openscreen` +
+`demo-with-cursor`. Override with `DEMOCLAW_POSTPROD_PROVIDER` / `DEMOCLAW_POSTPROD_PRESET`,
+manifest `providers.postProd`, or `aegis-demo.mjs` flags `--fast`, `--post-prod=…`,
+`--post-prod-preset=…`.
 
 ### Local MisoTTS (deferred — Mac Studio)
 
@@ -144,7 +152,8 @@ MISO_TTS_CMD="uv run python run_misotts.py"   # in the MisoLabsAI/MisoTTS repo
 - `generate_narration({ persona, pages, providers?, sessionId? })` — writes `narration.json`.
 - `synthesize_speech({ sessionId, providers? })` — writes `timing.json` + audio.
 - `record_performance({ sessionId })` — writes `marks.json` + `recording.webm`.
-- `produce_video({ sessionId, providers? })` — writes `output.mp4` + `result.json`, returns the playback URL.
+- `produce_video({ sessionId, providers? })` — writes `output.mp4` + `result.json`, returns the playback URL. Supports `providers.postProd` (`ffmpeg` | `openscreen`).
+- `assess_timing({ sessionId, thresholds? })` — read-only WPM/pacing report for the auto-critique loop.
 - `create_narrated_recording({ persona, pages, providers? })` — all four stages in one call.
 - `get_element_bounds({ url, selector })` — bounding box of an element.
 - `run_demo_actions({ url, actions, headed? })` — open a URL, run declarative actions, return the resulting snapshot. A reusable web-agent primitive for scripting/verifying a scene's actions outside the video pipeline.
@@ -176,7 +185,7 @@ narration/recording. This lets a demo click, type, submit, and wait — not just
 
 A bare `{ url }` (or `{ url, narration }`) still works — it's just a single scroll-only scene.
 
-**Action types:** `click`, `type`, `fill`, `keyboardType`, `press`, `find` (`by` = role/text/label/placeholder/…, `do` = click/fill/…), `scrollIntoView`, `wait` (`ms`), `waitFor` (`selector`, `timeoutMs?`), `enableAccessibility` (Flutter semantics unlock).
+**Action types:** `click`, `type`, `fill`, `keyboardType`, `press`, `find` (`by` = role/text/label/placeholder/…, `do` = click/fill/…), `scrollIntoView`, `wait` (`ms`), `waitFor` (`selector`, `timeoutMs?`), `enableAccessibility` (Flutter semantics unlock), `authLogin` (`profile` — agent-browser auth vault).
 
 **Latency & sync:** `entryActions` (and same-URL `reuseTab` transitions) run in the gap between
 scene marks, which post-production trims — so a multi-second `waitFor`/`wait` for async results
@@ -184,24 +193,29 @@ never desyncs the narration audio. Mixed narration is supported per scene: scrip
 (verbatim), auto-generated narration grounded in the post-action snapshot, and a DOM-text
 fallback when the accessibility tree is sparse (e.g. Flutter/canvas apps).
 
-## AEGIS demo (Phase 1.5 — interactive)
+## AEGIS demo
 
 With AEGIS running (`./quickstart.sh` in `evalguide_client`):
 
 ```bash
 cd mcp-server
-npm run ensure-aegis
-npm run aegis-demo
+npm run ensure-aegis              # Phase 1 (default): probes :5333
+AEGIS_DEMO_PHASE=2 npm run ensure-aegis   # Phase 2: probes :5173
+npm run aegis-demo                # Phase 1.5 Playground (interactive grading)
+npm run aegis-demo:phase2         # CritiX Admin tour (login + 5 routes)
+npm run aegis-demo:combined       # Playground + Admin in one video
+npm run verify-phase2             # smoke-test admin login + nav
 ```
 
-This is now an **interactive** Playground walkthrough, not a passive scroll: it enables
-Flutter accessibility, types a sample student essay, clicks **Submit**, waits for the real
-AI grading to finish, then narrates the actual results on screen (overall score, AI-detection,
-plagiarism, grammar, summary). No login required (Playground grading works unauthenticated;
-Turnstile must be off locally).
+**Phase 1.5** is an interactive Playground walkthrough: enables Flutter accessibility, types a
+sample student essay, clicks **Submit**, waits for real AI grading, then narrates the results.
+No login required (Turnstile must be off locally).
 
-Config (scenes/actions): [`aegis-demo.json`](aegis-demo.json). Phase 2 admin tour:
-[`docs/aegis-demo-phase2.md`](docs/aegis-demo-phase2.md).
+**Phase 2** loads admin credentials from `{aegisRoot}/.aegis/state.env`, logs into
+`http://localhost:5173/admin/login`, and tours dashboard, users, submissions, security
+(Email Whitelist tab), and RubriX integration via sidebar navigation.
+
+Config: [`aegis-demo.json`](aegis-demo.json). Details: [`docs/aegis-demo-phase2.md`](docs/aegis-demo-phase2.md).
 
 ## Free, on-device smoke run
 

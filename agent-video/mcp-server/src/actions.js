@@ -16,6 +16,7 @@
 //   { type: "wait",               ms }                // fixed delay
 //   { type: "waitFor",            selector, timeoutMs? }
 //   { type: "enableAccessibility" }                   // Flutter semantics unlock
+//   { type: "authLogin", profile }                    // agent-browser auth vault profile
 
 import {
   click,
@@ -28,13 +29,22 @@ import {
   findAction,
   keyboardType,
   snapshot,
+  authLogin,
 } from "./browser.js";
 import { sleep } from "./session.js";
+
+export class LoginFailedError extends Error {
+  constructor(message, { cause } = {}) {
+    super(message);
+    this.name = "LoginFailedError";
+    if (cause) this.cause = cause;
+  }
+}
 
 // Resolve a live @ref by its accessible name. Far more robust than hardcoded
 // numeric refs for canvas/Flutter apps, whose ref IDs shift between renders.
 // Prefers an exact name match, then a substring match (unless exact is set).
-function resolveRefByName(name, { exact = false } = {}) {
+export function resolveRefByName(name, { exact = false } = {}) {
   const { refs } = snapshot();
   const entries = Object.entries(refs);
   let hit = entries.find(([, v]) => (v.name || "") === name);
@@ -135,6 +145,10 @@ export async function runAction(action, { log = console.error } = {}) {
       if (!enabled) log(`[action] enableAccessibility: tree still sparse after ${attempts} attempts`);
       break;
     }
+    case "authLogin":
+      log(`[action] authLogin profile=${action.profile}`);
+      authLogin(action.profile);
+      break;
     default:
       log(`[action] WARNING unknown action type "${type}" - skipping`);
   }
@@ -150,7 +164,15 @@ export async function runActions(actions, { log = console.error, failFast = fals
       await runAction(action, { log });
     } catch (e) {
       log(`[action] FAILED ${action?.type}: ${e.message}`);
-      if (failFast) throw e;
+      if (failFast) {
+        if (action?.type === "waitFor" || action?.type === "authLogin") {
+          throw new LoginFailedError(
+            `Login or readiness check failed at ${action?.type}: ${e.message}`,
+            { cause: e }
+          );
+        }
+        throw e;
+      }
     }
   }
 }

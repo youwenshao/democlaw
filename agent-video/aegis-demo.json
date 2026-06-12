@@ -1,6 +1,16 @@
 {
   "aegisRoot": "/Users/youwen/Projects/AEGIS/evalguide_client",
   "healthPorts": [5333, 5173, 8765, 28001],
+  "critique": {
+    "enabled": true,
+    "maxIterations": 3
+  },
+  "providers": {
+    "postProd": {
+      "name": "openscreen",
+      "preset": "demo-with-cursor"
+    }
+  },
   "phase1": {
     "persona": "an enthusiastic ed-tech product manager demoing AI-powered essay grading for teachers",
     "pages": [
@@ -57,17 +67,92 @@
           { "type": "clickName", "name": "Assessment" },
           { "type": "wait", "ms": 1500 }
         ],
+        "actionScript": [
+          { "atMs": 0, "action": { "type": "wait", "ms": 22000 } },
+          { "atMs": 22000, "action": { "type": "clickName", "name": "Assessment" } },
+          { "atMs": 22800, "action": { "type": "wait", "ms": 1500 } }
+        ],
         "hint": "The essay has just been graded and the Assessment tab is open, showing a big Overall Score card and an IELTS-style band breakdown. Describe the overall score and the criterion scores (Task Response, Coherence and Cohesion, Lexical Resource, Grammatical Range and Accuracy) exactly as they appear. Mention only numbers that actually appear in the snapshot or visible text - do not invent any."
       }
     ]
   },
   "phase2": {
     "note": "Requires admin login; see docs/aegis-demo-phase2.md",
+    "persona": "an operations-focused ed-tech admin showing how CritiX is managed behind the scenes",
     "pages": [
-      { "url": "http://localhost:5173/login" },
-      { "url": "http://localhost:5173/dashboard" },
-      { "url": "http://localhost:5173/security" },
-      { "url": "http://localhost:5173/rubrix" }
+      {
+        "url": "http://localhost:5173/admin/login",
+        "loginScene": true,
+        "segments": [
+          {
+            "text": "CritiX Admin is the operations console where administrators monitor usage, manage users, and configure security.",
+            "scrollTo": "top"
+          },
+          {
+            "text": "After sign-in, the dashboard gives a live snapshot of platform activity and traffic.",
+            "scrollTo": "top"
+          }
+        ]
+      },
+      {
+        "url": "http://localhost:5173/admin/dashboard",
+        "reuseTab": true,
+        "actionScript": [
+          { "atMs": 0, "action": { "type": "wait", "ms": 1500 } }
+        ],
+        "hint": "The CritiX Admin dashboard is visible with stats cards, a traffic chart, and recent activity. Describe the headline metrics and trends exactly as shown on screen. Mention only numbers and labels that actually appear - do not invent any."
+      },
+      {
+        "url": "http://localhost:5173/admin/users",
+        "reuseTab": true,
+        "actionScript": [
+          { "atMs": 0, "action": { "type": "click", "selector": "[data-testid='aegis-critix-admin-nav-users']" } },
+          { "atMs": 500, "action": { "type": "wait", "ms": 1500 } }
+        ],
+        "hint": "The Users page lists registered accounts with columns and actions visible in the table. Describe what administrators can see and do here using only text that appears on screen."
+      },
+      {
+        "url": "http://localhost:5173/admin/submissions",
+        "reuseTab": true,
+        "actionScript": [
+          { "atMs": 0, "action": { "type": "click", "selector": "[data-testid='aegis-critix-admin-nav-submissions']" } },
+          { "atMs": 500, "action": { "type": "wait", "ms": 1500 } }
+        ],
+        "hint": "The Submissions page shows student essay submissions that admins can review. Describe the list layout and any status or metadata columns exactly as they appear."
+      },
+      {
+        "url": "http://localhost:5173/admin/security",
+        "reuseTab": true,
+        "actionScript": [
+          { "atMs": 0, "action": { "type": "click", "selector": "[data-testid='aegis-critix-admin-nav-security']" } },
+          { "atMs": 500, "action": { "type": "wait", "ms": 800 } },
+          { "atMs": 1400, "action": { "type": "clickName", "name": "Email Whitelist" } },
+          { "atMs": 1900, "action": { "type": "wait", "ms": 1200 } }
+        ],
+        "segments": [
+          {
+            "text": "Security controls who can access CritiX. The email whitelist gates teacher sign-in so only approved domains and addresses get through.",
+            "scrollTo": "top"
+          }
+        ],
+        "hint": "The Email Whitelist tab is open under Security. Describe the whitelist entries and controls visible on screen using only actual text from the page."
+      },
+      {
+        "url": "http://localhost:5173/admin/rubrix",
+        "reuseTab": true,
+        "actionScript": [
+          { "atMs": 0, "action": { "type": "click", "selector": "[data-testid='aegis-critix-admin-nav-rubrix']" } },
+          { "atMs": 500, "action": { "type": "wait", "ms": 1500 } }
+        ],
+        "hint": "The RubriX integration page shows connection status and model settings between CritiX and RubriX. Describe what is connected and configured using only labels and values visible on screen."
+      }
     ]
+  },
+  "combined": {
+    "persona": "an enthusiastic ed-tech product manager walking through CritiX from teacher grading to admin operations",
+    "transition": {
+      "text": "Beyond the teacher Playground, operators use CritiX Admin to manage users, security, and RubriX integration.",
+      "scrollTo": "top"
+    }
   }
 }

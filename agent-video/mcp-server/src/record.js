@@ -9,13 +9,7 @@ import {
   close,
   recordStart,
   recordStop,
-  enableSmoothScroll,
-  pageDimensions,
-  scrollIntoView,
-  scrollToTop,
-  scrollToBottom,
 } from "./browser.js";
-import { runActions } from "./actions.js";
 import {
   ensureSession,
   readArtifact,
@@ -24,104 +18,184 @@ import {
   sleep,
 } from "./session.js";
 import { join } from "path";
+import {
+  performSceneTimeline,
+  recordSingleScene,
+  sliceSceneClipsFromMaster,
+  mergeSceneClips,
+  mergeFocusEvents,
+  syncMarksDurations,
+  navigateToScene,
+} from "./sceneReplay.js";
+import {
+  isAdminUrl,
+  pingAdminSession,
+  resolveAdminCredentials,
+  preflightAdminAuth,
+  findFirstAdminPageIndex,
+} from "./adminSession.js";
 
-export async function recordPerformance({ sessionId, viewport = [1280, 720] }) {
+async function runFullRecording({ session, timing, viewport, log }) {
+  const videoPath = join(session.sessionDir, "recording.webm");
+  const marks = [];
+  const focusEvents = [];
+  const creds = timing.pages.some((p) => isAdminUrl(p.url))
+    ? resolveAdminCredentials()
+    : null;
+
+  if (findFirstAdminPageIndex(timing.pages) >= 0) {
+    await preflightAdminAuth(timing.pages, { log });
+  }
+
+  setViewport(viewport[0], viewport[1]);
+  open(timing.pages[0].url, { headed: true });
+  await sleep(2000);
+
+  recordStart(videoPath);
+  const recordingStartMs = Date.now();
+
+  for (let i = 0; i < timing.pages.length; i++) {
+    const page = timing.pages[i];
+    const nextPage = timing.pages[i + 1];
+
+    if (i > 0) {
+      await navigateToScene(page, i, log, { creds });
+    } else if (creds && isAdminUrl(page.url)) {
+      await navigateToScene(page, i, log, { creds });
+    }
+
+    const offsetMs = Date.now() - recordingStartMs;
+    marks.push({ clipNum: i + 1, offsetMs, durationMs: page.pageDurationMs });
+    log(`Marked clip ${i + 1} at offset ${offsetMs}ms (duration ${page.pageDurationMs}ms)`);
+
+    const sceneFocus = await performSceneTimeline(
+      page,
+      page.segmentTimings || [],
+      viewport,
+      i + 1,
+      {
+        log,
+        onFocusEvent: (evt) => focusEvents.push(evt),
+      }
+    );
+    void sceneFocus;
+
+    if (creds && (isAdminUrl(page.url) || (nextPage && isAdminUrl(nextPage.url)))) {
+      await pingAdminSession({ log });
+    }
+  }
+
+  recordStop();
+  close();
+  await sleep(1000);
+
+  const sceneClips = sliceSceneClipsFromMaster({
+    sessionDir: session.sessionDir,
+    videoPath,
+    marks,
+    log,
+    source: "full",
+  });
+
+  return { videoPath, marks, focusEvents, sceneClips };
+}
+
+async function runPartialRecording({
+  session,
+  timing,
+  viewport,
+  clipNums,
+  merge,
+  log,
+}) {
+  const priorMarks = readArtifact(session.sessionId, "marks.json");
+  if (!priorMarks.marks?.length) {
+    throw new Error(
+      "Partial record requires a prior full record_performance run (marks.json with sceneClips)."
+    );
+  }
+  const existingClips = priorMarks.sceneClips || [];
+  const existingFocus = priorMarks.focusEvents || [];
+
+  const updates = [];
+  const newFocus = [];
+
+  for (const clipNum of clipNums) {
+    log(`=== PARTIAL RECORD clip ${clipNum} ===`);
+    const result = await recordSingleScene({
+      sessionDir: session.sessionDir,
+      timing,
+      clipNum,
+      viewport,
+      log,
+    });
+    updates.push(result);
+    newFocus.push(...result.focusEvents);
+    try {
+      close();
+    } catch {
+      /* best effort */
+    }
+    await sleep(500);
+  }
+
+  const sceneClips = mergeSceneClips(existingClips, updates, merge);
+  const marks = syncMarksDurations(priorMarks.marks, sceneClips);
+  const focusEvents = mergeFocusEvents(existingFocus, newFocus, clipNums);
+
+  return {
+    videoPath: priorMarks.videoPath,
+    marks,
+    focusEvents,
+    sceneClips,
+  };
+}
+
+export async function recordPerformance({
+  sessionId,
+  viewport = [1280, 720],
+  clipNums = null,
+  merge = true,
+}) {
   const session = ensureSession(sessionId);
   const log = makeLogger(session.sessionId);
   const timing = readArtifact(session.sessionId, "timing.json");
-  const videoPath = join(session.sessionDir, "recording.webm");
 
-  log(`=== PERFORMANCE PASS === pages=${timing.pages.length}`);
+  const partial = Array.isArray(clipNums) && clipNums.length > 0;
+  log(
+    `=== PERFORMANCE PASS === pages=${timing.pages.length}${partial ? ` partial=${clipNums.join(",")}` : ""}`
+  );
 
-  const marks = [];
   try {
-    setViewport(viewport[0], viewport[1]);
-    open(timing.pages[0].url, { headed: true });
-    await sleep(2000);
-
-    recordStart(videoPath);
-    const recordingStartMs = Date.now();
-
-    for (let i = 0; i < timing.pages.length; i++) {
-      const page = timing.pages[i];
-
-      // Scene transition. Everything here happens BEFORE we mark the clip offset,
-      // so it lands in the inter-scene gap that post-production trims out -
-      // navigation, form fill, submit, and waitFor readiness never desync audio.
-      if (i > 0) {
-        if (page.reuseTab) {
-          log(`Scene ${i + 1}: reusing current tab (no reload)`);
-        } else {
-          open(page.url);
-          await sleep(1000);
-        }
-      }
-      if (Array.isArray(page.entryActions) && page.entryActions.length > 0) {
-        log(`Scene ${i + 1}: running ${page.entryActions.length} entryActions (in trimmed gap)`);
-        await runActions(page.entryActions, { log });
-        await sleep(500);
-      }
-
-      const offsetMs = Date.now() - recordingStartMs;
-      marks.push({ clipNum: i + 1, offsetMs, durationMs: page.pageDurationMs });
-      log(`Marked clip ${i + 1} at offset ${offsetMs}ms (duration ${page.pageDurationMs}ms)`);
-
-      enableSmoothScroll();
-      log(`Page dimensions: ${pageDimensions()}`);
-
-      const segTimings = page.segmentTimings || [];
-      if (segTimings.length > 0) {
-        const segStart = Date.now();
-        for (const seg of segTimings) {
-          const waitMs = seg.startTimeMs - (Date.now() - segStart);
-          if (waitMs > 0) await sleep(waitMs);
-
-          // Fire the segment's interaction on the timeline, then scroll.
-          if (seg.action) {
-            try {
-              await runActions([seg.action], { log });
-            } catch (e) {
-              log(`Failed segment action ${seg.action?.type}: ${e.message}`);
-            }
-          }
-
-          if (seg.scrollTo === "top") {
-            scrollToTop();
-          } else if (seg.scrollTo === "bottom") {
-            scrollToBottom();
-          } else if (seg.scrollTo) {
-            try {
-              scrollIntoView(seg.scrollTo);
-            } catch (e) {
-              log(`Failed to scroll to ref @${seg.scrollTo}: ${e.message}`);
-            }
-          }
-        }
-        const remainingMs = page.pageDurationMs - (Date.now() - segStart);
-        if (remainingMs > 0) await sleep(remainingMs);
-      } else {
-        log(`WARNING: no segment timings for page ${i + 1}; using flat wait`);
-        await sleep(page.pageDurationMs);
-      }
+    let result;
+    if (partial) {
+      result = await runPartialRecording({
+        session,
+        timing,
+        viewport,
+        clipNums,
+        merge,
+        log,
+      });
+    } else {
+      result = await runFullRecording({ session, timing, viewport, log });
     }
 
-    recordStop();
-    close();
-    await sleep(1000);
+    const marksData = {
+      videoPath: result.videoPath,
+      marks: result.marks,
+      sceneClips: result.sceneClips,
+      ...(result.focusEvents.length > 0 ? { focusEvents: result.focusEvents } : {}),
+      createdAt: new Date().toISOString(),
+    };
+    writeArtifact(session.sessionId, "marks.json", marksData);
+    return { sessionId: session.sessionId, ...marksData };
   } catch (e) {
     try {
       close();
-    } catch (_) {
+    } catch {
       /* best effort */
     }
     throw e;
   }
-
-  const marksData = {
-    videoPath,
-    marks,
-    createdAt: new Date().toISOString(),
-  };
-  writeArtifact(session.sessionId, "marks.json", marksData);
-  return { sessionId: session.sessionId, ...marksData };
 }

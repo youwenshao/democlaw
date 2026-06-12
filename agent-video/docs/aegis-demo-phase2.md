@@ -1,21 +1,22 @@
 # AEGIS demo — Phase 2 (CritiX Admin multi-page tour)
 
 Phase 1 demos the **teacher Playground** at `http://localhost:5333` with no login.
-Phase 2 targets the **CritiX Admin** panel at `http://localhost:5173` with multiple
-URL routes.
+Phase 2 targets the **CritiX Admin** panel at `http://localhost:5173/admin/` with multiple
+URL routes (Vite `VITE_BASE_PATH=/admin`).
 
-## URLs (from `admin-panel/src/App.jsx`)
+## URLs
 
 | Route | Purpose |
 |-------|---------|
-| `/login` | Admin sign-in |
-| `/dashboard` | Overview |
-| `/users` | User management |
-| `/submissions` | Submission list |
-| `/security` | Email whitelist |
-| `/rubrix` | CritiX ↔ RubriX integration |
+| `/admin/login` | Admin sign-in |
+| `/admin/dashboard` | Overview |
+| `/admin/users` | User management |
+| `/admin/submissions` | Submission list |
+| `/admin/security` | Security (Email Whitelist tab in demo) |
+| `/admin/rubrix` | CritiX ↔ RubriX integration |
 
 Manifest entries live in [`aegis-demo.json`](../aegis-demo.json) under `phase2.pages`.
+Login `entryActions` are injected at runtime from credentials (never committed to JSON).
 
 ## Credentials
 
@@ -25,32 +26,45 @@ Admin username and password are created during `./quickstart.sh` and stored loca
 /Users/youwen/Projects/AEGIS/evalguide_client/.aegis/state.env
 ```
 
-Never commit this file. Load credentials at runtime only when implementing Phase 2 automation.
+Keys: `CRITIX_ADMIN_USERNAME`, `ADMIN_PASSWORD`.
 
-## Pipeline status (post Phase 1.5)
+Never commit this file. DemoClaw loads credentials via [`mcp-server/src/aegisCredentials.js`](../mcp-server/src/aegisCredentials.js).
+Optional env overrides: `CRITIX_ADMIN_USERNAME`, `ADMIN_PASSWORD`.
 
-Phase 1.5 added an **action-capable, scene-based** pipeline (see
-[`agent-video/README.md`](../README.md) "Scenes & actions"). The pipeline can now:
+## Run Phase 2
 
-- Click, type, fill, press, and `find` elements by role/text/placeholder
-- Re-snapshot after each scene's actions (narration grounds on the post-action state)
-- `enableAccessibility` to unlock the Flutter semantics tree
-- `waitFor` / `wait` for async results in the trimmed inter-scene gap (no audio desync)
-- `reuseTab` to advance state on the same URL without reloading
+```bash
+cd agent-video/mcp-server
+AEGIS_DEMO_PHASE=2 npm run ensure-aegis   # probes :5173 (localhost, IPv6-safe)
+npm run verify-phase2                   # login + sidebar nav smoke test
+npm run aegis-demo:phase2               # standalone admin tour mp4
+npm run aegis-demo:combined             # Playground grading + admin tour
+```
 
-So login form fill and tab clicks are no longer blocked by the pipeline. The remaining Phase 2
-work is mostly **credentials + verification**, not new primitives:
+Combined mode prepends the Phase 1.5 Playground scenes and a transition line, then runs the
+admin tour with the same login injection.
 
-1. **Login scene** — `entryActions` that `find` the email/password fields and `fill` + submit
-   on `:5173`, then `waitFor` the dashboard. Load credentials at runtime (never commit them).
-2. **`agent-browser` auth vault** — optionally persist session cookies after one login so
-   later routes skip re-auth.
-3. **Per-route scenes** — `/dashboard`, `/security`, `/rubrix` as additional scenes (each a
-   navigation `entryAction` or a fresh `url`), narrated in one recording.
-4. **`run_demo_actions` MCP tool** — already available to script/verify a route's actions
-   before recording.
+## Verification
+
+`npm run verify-phase2` exercises:
+
+1. Login via `data-testid` selectors
+2. Sidebar nav → Users, Submissions, Security (+ Email Whitelist tab via `clickName`), RubriX
+
+Use the **`run_demo_actions`** MCP tool to debug a single scene's actions before recording.
+
+## Auth vault (optional)
+
+If headed recording loses session state between steps:
+
+```bash
+npm run setup-critix-admin-auth   # saves profile "critix-admin" in agent-browser
+```
+
+Then add `{ "type": "authLogin", "profile": "critix-admin" }` to a scene's `entryActions`
+instead of manual fill/click (see [`actions.js`](../mcp-server/src/actions.js)).
 
 ## RubriX Admin
 
 RubriX Admin runs at `http://localhost:5174/admin/` (sibling repo). Same login
-blockers apply. Include in Phase 2 only after CritiX Admin flow is solved.
+blockers apply. Out of scope until CritiX Admin tour is stable.

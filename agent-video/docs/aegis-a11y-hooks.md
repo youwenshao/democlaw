@@ -55,14 +55,17 @@ agent-browser get box "[flt-semantics-identifier='aegis-critix-submit-essay']" -
 agent-browser get box "[flt-semantics-identifier='aegis-critix-grading-criteria']" --json
 ```
 
-## CritiX Admin (`http://localhost:5173`)
+## CritiX Admin (`http://localhost:5173/admin/`)
 
 | Control | `data-testid` |
 |---------|---------------|
 | Username | `aegis-critix-admin-login-username` |
 | Password | `aegis-critix-admin-login-password` |
 | Login button | `aegis-critix-admin-login-submit` |
+| Main content (post-login) | `aegis-critix-admin-main-content` |
 | Nav: Dashboard | `aegis-critix-admin-nav-dashboard` |
+| Nav: Users | `aegis-critix-admin-nav-users` |
+| Nav: Submissions | `aegis-critix-admin-nav-submissions` |
 | Nav: Security | `aegis-critix-admin-nav-security` |
 | Nav: RubriX | `aegis-critix-admin-nav-rubrix` |
 
@@ -71,6 +74,9 @@ agent-browser fill "[data-testid='aegis-critix-admin-login-username']" "admin"
 agent-browser fill "[data-testid='aegis-critix-admin-login-password']" "$PASSWORD"
 agent-browser click "[data-testid='aegis-critix-admin-login-submit']"
 ```
+
+Security sub-tabs use accessible names (e.g. `clickName` **Email Whitelist** — emoji prefix
+breaks plain `find text`).
 
 ## RubriX Assessment (`http://localhost:3001/playground`)
 
@@ -93,14 +99,25 @@ agent-browser click "[data-testid='aegis-critix-admin-login-submit']"
 | Nav: Dashboard | `aegis-rubrix-admin-nav-dashboard` |
 | Nav: Rubrics | `aegis-rubrix-admin-nav-rubrics` |
 
-## Phase 2 `preActions` sketch
+## Phase 2 `entryActions` sketch
 
 ```json
 {
-  "preActions": [
-    "fill \"[data-testid='aegis-critix-admin-login-username']\" \"admin\"",
-    "fill \"[data-testid='aegis-critix-admin-login-password']\" \"<from-state.env>\"",
-    "click \"[data-testid='aegis-critix-admin-login-submit']\""
+  "loginScene": true,
+  "url": "http://localhost:5173/admin/login",
+  "entryActions": []
+}
+```
+
+Credentials are injected at runtime by `aegisCredentials.js` (not stored in JSON). Equivalent manual steps:
+
+```json
+{
+  "entryActions": [
+    { "type": "fill", "selector": "[data-testid='aegis-critix-admin-login-username']", "text": "<from-state.env>" },
+    { "type": "fill", "selector": "[data-testid='aegis-critix-admin-login-password']", "text": "<from-state.env>" },
+    { "type": "click", "selector": "[data-testid='aegis-critix-admin-login-submit']" },
+    { "type": "waitFor", "selector": "[data-testid='aegis-critix-admin-main-content']", "timeoutMs": 45000 }
   ]
 }
 ```

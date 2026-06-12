@@ -42,6 +42,28 @@ function resolveNarrationProvider(explicit) {
   return { name: "claude" };
 }
 
+export function resolvePostProd(explicit = {}) {
+  const name =
+    explicit.name ||
+    process.env.DEMOCLAW_POSTPROD_PROVIDER ||
+    "ffmpeg";
+
+  const preset =
+    explicit.preset ||
+    (name === "openscreen"
+      ? process.env.DEMOCLAW_POSTPROD_PRESET || "demo-with-cursor"
+      : undefined);
+
+  const base = { name };
+  if (preset) base.preset = preset;
+
+  const merged = { ...base, ...explicit, name, ...(preset ? { preset } : {}) };
+  if (process.env.DEMOCLAW_WALLPAPER) {
+    merged.wallpaper = process.env.DEMOCLAW_WALLPAPER;
+  }
+  return merged;
+}
+
 export function resolveProviders(providers = {}) {
   const narration = resolveNarrationProvider(providers.narration);
 
@@ -52,5 +74,7 @@ export function resolveProviders(providers = {}) {
     process.env.MUX_TOKEN_ID && process.env.MUX_TOKEN_SECRET ? "mux" : "local";
   const host = pick(providers.host, process.env.DEMOCLAW_HOST_PROVIDER, hostDefault);
 
-  return { narration, tts, host };
+  const postProd = resolvePostProd(providers.postProd || {});
+
+  return { narration, tts, host, postProd };
 }

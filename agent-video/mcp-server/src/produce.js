@@ -2,100 +2,192 @@
 // Reads timing.json + marks.json, extracts each page's video slice, concatenates
 // them, mixes every audio clip onto the timeline at its absolute offset, then
 // hands the finished file to the configured host provider. Writes result.json.
+//
+// When postProd.name === "openscreen", builds polish_plan.json and runs the
+// headless compositor before muxing narration. Falls back to ffmpeg on failure.
 
 import { join } from "path";
-import { unlinkSync } from "fs";
+import { existsSync, statSync } from "fs";
 import {
   ensureSession,
   readArtifact,
   writeArtifact,
   makeLogger,
 } from "./session.js";
-import {
-  extractSegment,
-  concatVideo,
-  muxAudioOntoVideo,
-  probeDurationMs,
-} from "./ffmpeg.js";
 import { getHostProvider } from "./host/index.js";
 import { resolveProviders } from "./config.js";
+import { resolvePostProdOptions } from "./polish/presets.js";
+import { buildPolishPlan } from "./polish/buildPlan.js";
+import { runOpenscreenExport } from "./polish/runExport.js";
+import {
+  extractAndConcatSilent,
+  buildAudioClipsFromTiming,
+  buildAudioClipsFromPlan,
+  muxAndCleanup,
+} from "./polish/videoPrep.js";
+
+async function runFfmpegPath({
+  session,
+  timing,
+  marksData,
+  log,
+  outputPath,
+}) {
+  const { videoPath, marks } = marksData;
+  const { segmentPaths, concatListPath, concatSilentPath } = extractAndConcatSilent({
+    sessionDir: session.sessionDir,
+    videoPath,
+    marks,
+    marksData,
+    log,
+  });
+
+  const audioClips = buildAudioClipsFromTiming(timing, marks, segmentPaths);
+  muxAndCleanup({
+    videoPath: concatSilentPath,
+    audioClips,
+    outputPath,
+    segmentPaths,
+    concatPath: concatSilentPath,
+    concatListPath,
+  });
+
+  return {
+    postProdUsed: "ffmpeg",
+    concatSilentPath,
+    polishPlanPath: null,
+    polishedSilentPath: null,
+  };
+}
+
+async function runOpenscreenPath({
+  session,
+  timing,
+  marksData,
+  postProdOptions,
+  log,
+  outputPath,
+}) {
+  const { videoPath, marks } = marksData;
+  const postProd = resolvePostProdOptions(postProdOptions);
+
+  const { segmentPaths, concatListPath, concatSilentPath } = extractAndConcatSilent({
+    sessionDir: session.sessionDir,
+    videoPath,
+    marks,
+    marksData,
+    log,
+  });
+
+  const polishPlan = buildPolishPlan({
+    sessionDir: session.sessionDir,
+    timing,
+    marksData: { ...marksData, marks },
+    postProdOptions: postProd,
+  });
+  polishPlan.workingVideo = concatSilentPath;
+
+  const polishPlanPath = writeArtifact(session.sessionId, "polish_plan.json", polishPlan);
+  log(`Wrote polish plan: ${polishPlanPath}`);
+
+  let visualPath = concatSilentPath;
+  let postProdUsed = "openscreen";
+
+  try {
+    await runOpenscreenExport(session.sessionDir, { log });
+    visualPath = join(session.sessionDir, "polished_silent.mp4");
+    log(`OpenScreen export complete: ${visualPath}`);
+  } catch (e) {
+    const partialWebm = join(session.sessionDir, "polished_silent.webm");
+    const partialMp4 = join(session.sessionDir, "polished_silent.mp4");
+    const partialNote = existsSync(partialWebm)
+      ? `partial webm ${statSync(partialWebm).size} bytes at ${partialWebm}`
+      : existsSync(partialMp4)
+        ? `partial mp4 ${statSync(partialMp4).size} bytes at ${partialMp4}`
+        : "no partial polished file written";
+    log(
+      `WARNING: OpenScreen export failed (${e.message}); ${partialNote}; falling back to ffmpeg concat. ` +
+        `Re-run produce_video on session ${session.sessionId} with postProd=openscreen after fixing export.`
+    );
+    postProdUsed = "openscreen-fallback-ffmpeg";
+    visualPath = concatSilentPath;
+  }
+
+  const audioClips = buildAudioClipsFromPlan(polishPlan);
+  muxAndCleanup({
+    videoPath: visualPath,
+    audioClips,
+    outputPath,
+    segmentPaths,
+    concatPath: concatSilentPath,
+    concatListPath,
+  });
+
+  return {
+    postProdUsed,
+    concatSilentPath,
+    polishPlanPath,
+    polishedSilentPath:
+      postProdUsed === "openscreen" ? join(session.sessionDir, "polished_silent.mp4") : null,
+  };
+}
 
 export async function produceVideo({ sessionId, providers }) {
   const session = ensureSession(sessionId);
   const log = makeLogger(session.sessionId);
   const timing = readArtifact(session.sessionId, "timing.json");
   const marksData = readArtifact(session.sessionId, "marks.json");
-  const { videoPath, marks } = marksData;
 
-  log(`=== POST-PRODUCTION === segments=${marks.length}`);
+  const resolved = resolveProviders({ ...(timing.providers || {}), ...(providers || {}) });
+  const postProdName = resolved.postProd?.name || "ffmpeg";
 
-  // 1. Extract each page's slice of the raw recording.
-  const segmentPaths = [];
-  for (const mark of marks) {
-    const startSec = (mark.offsetMs / 1000).toFixed(3);
-    const durationSec = (mark.durationMs / 1000).toFixed(3);
-    const segPath = join(session.sessionDir, `segment_${mark.clipNum}.mp4`);
-    log(`Extract segment ${mark.clipNum}: ${startSec}s for ${durationSec}s`);
-    extractSegment(videoPath, startSec, durationSec, segPath);
-    segmentPaths.push(segPath);
-  }
+  log(`=== POST-PRODUCTION === segments=${marksData.marks.length} postProd=${postProdName}`);
 
-  // 2. Concatenate the slices.
-  const concatListPath = join(session.sessionDir, "concat_list.txt");
-  const concatPath = join(session.sessionDir, "concat.mp4");
-  concatVideo(segmentPaths, concatListPath, concatPath);
-
-  // 3. Place every audio clip at its absolute timeline offset.
-  //    page start in final video = cumulative ACTUAL extracted slice durations.
-  const audioClips = [];
-  let cumulativeOffsetMs = 0;
-  for (let i = 0; i < marks.length; i++) {
-    const page = timing.pages[i];
-    const actualSegMs = probeDurationMs(segmentPaths[i]);
-    for (const clip of page.audioClips) {
-      audioClips.push({
-        path: clip.path,
-        offsetMs: cumulativeOffsetMs + clip.offsetWithinPageMs,
-      });
-    }
-    cumulativeOffsetMs += actualSegMs;
-  }
-
-  // 4. Mix audio onto the concatenated video.
   const outputPath = join(session.sessionDir, "output.mp4");
-  muxAudioOntoVideo(concatPath, audioClips, outputPath);
+  let prodMeta;
+
+  if (postProdName === "openscreen") {
+    prodMeta = await runOpenscreenPath({
+      session,
+      timing,
+      marksData,
+      postProdOptions: resolved.postProd,
+      log,
+      outputPath,
+    });
+  } else {
+    prodMeta = await runFfmpegPath({
+      session,
+      timing,
+      marksData,
+      log,
+      outputPath,
+    });
+  }
+
   log(`Output created: ${outputPath}`);
 
-  // 5. Host it.
-  const resolved = resolveProviders({ ...(timing.providers || {}), ...(providers || {}) });
   const host = getHostProvider(resolved.host.name);
   log(`Hosting via "${resolved.host.name}"...`);
   const hosted = await host.upload(outputPath, resolved.host);
   log(`Hosted: ${hosted.url}`);
 
-  // Cleanup intermediates.
-  for (const p of segmentPaths) {
-    try {
-      unlinkSync(p);
-    } catch (e) {
-      /* best effort */
-    }
-  }
-  try {
-    unlinkSync(concatPath);
-    unlinkSync(concatListPath);
-  } catch (e) {
-    /* best effort */
-  }
-
   const result = {
     success: true,
     url: hosted.url,
-    playbackUrl: hosted.url, // backward-compatible alias
+    playbackUrl: hosted.url,
     host: resolved.host.name,
+    postProd: prodMeta.postProdUsed,
     outputPath,
     sessionDir: session.sessionDir,
-    pagesRecorded: marks.length,
+    pagesRecorded: marksData.marks.length,
+    polishPlanPath: prodMeta.polishPlanPath,
+    intermediates: {
+      concatSilent: prodMeta.concatSilentPath,
+      ...(prodMeta.polishedSilentPath
+        ? { polishedSilent: prodMeta.polishedSilentPath }
+        : {}),
+    },
     hosted,
   };
   writeArtifact(session.sessionId, "result.json", result);

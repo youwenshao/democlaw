@@ -22,6 +22,7 @@ import { synthesizeSpeech } from "./src/synthesize.js";
 import { recordPerformance } from "./src/record.js";
 import { produceVideo } from "./src/produce.js";
 import { createNarratedRecording } from "./src/orchestrator.js";
+import { assessTiming } from "./src/critique/assessTiming.js";
 
 loadEnv();
 
@@ -55,6 +56,45 @@ const PROVIDERS_SCHEMA = {
       description: 'Video host. name: "mux" | "local" (file output, default on-device) | "s3" (S3-compatible).',
       properties: {
         name: { type: "string", enum: ["mux", "local", "s3"] },
+      },
+    },
+    postProd: {
+      type: "object",
+      description:
+        'Stage 4 post-production. name: "ffmpeg" (default) | "openscreen" (wallpaper/padding/shadow/zoom polish; ffmpeg fallback on failure).',
+      properties: {
+        name: { type: "string", enum: ["ffmpeg", "openscreen"] },
+        preset: { type: "string", description: '"demo-default" | "demo-with-cursor" | "fast"' },
+        width: { type: "number" },
+        height: { type: "number" },
+        frameRate: { type: "number" },
+        wallpaper: {
+          type: "string",
+          description: 'Solid "#hex", "macos" (desktop wallpaper), or absolute image path',
+        },
+        padding: { type: "number" },
+        borderRadius: { type: "number" },
+        showShadow: { type: "boolean" },
+        motionBlurAmount: { type: "number" },
+        zoom: {
+          type: "object",
+          properties: {
+            enabled: { type: "boolean" },
+            defaultDepth: { type: "number" },
+            clickDepth: { type: "number" },
+            holdMs: { type: "number" },
+            easeInMs: { type: "number" },
+            easeOutMs: { type: "number" },
+          },
+        },
+        cursor: {
+          type: "object",
+          properties: {
+            enabled: { type: "boolean" },
+            scale: { type: "number" },
+            smoothing: { type: "number" },
+          },
+        },
       },
     },
   },
@@ -194,6 +234,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           sessionId: { type: "string", description: "Session from generate_narration" },
           providers: PROVIDERS_SCHEMA,
+          clipNums: {
+            type: "array",
+            items: { type: "number" },
+            description: "Optional: re-synthesize TTS only for these scene clip numbers (1-based).",
+          },
         },
         required: ["sessionId"],
       },
@@ -201,11 +246,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "record_performance",
       description:
-        "Stage 3: performance pass. Reads timing.json, records the screen, and drives smooth content-aware scrolling timed to the narration. Writes marks.json. Re-run this alone if the page model changed.",
+        "Stage 3: performance pass. Reads timing.json, records the screen, and drives smooth content-aware scrolling timed to the narration. Writes marks.json + sceneClips. Re-run with clipNums to partially re-record specific scenes.",
       inputSchema: {
         type: "object",
         properties: {
           sessionId: { type: "string", description: "Session from synthesize_speech" },
+          clipNums: {
+            type: "array",
+            items: { type: "number" },
+            description: "Optional: re-record only these scenes (1-based). Requires prior full run for merge.",
+          },
+          merge: {
+            type: "boolean",
+            description: "When clipNums set, merge into existing sceneClips (default true).",
+          },
         },
         required: ["sessionId"],
       },
@@ -248,6 +302,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           selector: { type: "string", description: "CSS selector for the element" },
         },
         required: ["url", "selector"],
+      },
+    },
+    {
+      name: "assess_timing",
+      description:
+        "Read-only pacing analysis for the auto-critique loop. Reads timing.json and returns per-segment WPM, rushing/dragging flags, and scene summaries. Use after record_performance before writing critique.json.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          sessionId: { type: "string", description: "Session from synthesize_speech / record_performance" },
+          thresholds: {
+            type: "object",
+            description: "Optional overrides: rushWpm, dragWpm, minDurationMs, maxDurationMs",
+          },
+        },
+        required: ["sessionId"],
       },
     },
     {
@@ -296,15 +366,27 @@ const handlers = {
   },
 
   synthesize_speech(args) {
-    return synthesizeSpeech({ sessionId: args.sessionId, providers: args.providers });
+    return synthesizeSpeech({
+      sessionId: args.sessionId,
+      providers: args.providers,
+      clipNums: args.clipNums,
+    });
   },
 
   record_performance(args) {
-    return recordPerformance({ sessionId: args.sessionId });
+    return recordPerformance({
+      sessionId: args.sessionId,
+      clipNums: args.clipNums,
+      merge: args.merge !== false,
+    });
   },
 
   produce_video(args) {
     return produceVideo({ sessionId: args.sessionId, providers: args.providers });
+  },
+
+  assess_timing(args) {
+    return assessTiming({ sessionId: args.sessionId, thresholds: args.thresholds });
   },
 
   create_narrated_recording(args) {
@@ -312,6 +394,7 @@ const handlers = {
       persona: args.persona,
       pages: args.pages,
       providers: args.providers,
+      critique: args.critique,
     });
   },
 

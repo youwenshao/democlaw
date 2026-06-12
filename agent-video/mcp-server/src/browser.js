@@ -82,7 +82,8 @@ export function press(key) {
 // Wait for a selector to appear, or for a fixed number of milliseconds.
 // agent-browser's `wait` accepts either a selector or a millisecond count.
 export function waitForSelector(selectorOrMs, { timeout = 30000 } = {}) {
-  agentBrowser(`wait ${shq(String(selectorOrMs))}`, { timeout: timeout + 5000 });
+  const execTimeout = Math.max(timeout + 60_000, 120_000);
+  agentBrowser(`wait ${shq(String(selectorOrMs))}`, { timeout: execTimeout });
 }
 
 export function screenshot(path) {
@@ -142,7 +143,15 @@ export function recordStop() {
   agentBrowser(`record stop`);
 }
 
+export function authLogin(profile) {
+  agentBrowser(`auth login ${shq(profile)}`, { timeout: 90000 });
+}
+
 export function getBox(selector) {
-  const result = agentBrowser(`get box "${selector}" --json`);
-  return JSON.parse(result);
+  const result = agentBrowser(`get box ${shq(selector)} --json`);
+  const parsed = JSON.parse(result);
+  if (parsed?.data && typeof parsed.data === "object") {
+    return parsed.data;
+  }
+  return parsed;
 }
